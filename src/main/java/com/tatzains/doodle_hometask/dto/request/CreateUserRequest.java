@@ -1,4 +1,4 @@
-package com.tatzains.doodle_hometask.dto;
+package com.tatzains.doodle_hometask.dto.request;
 
 import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;

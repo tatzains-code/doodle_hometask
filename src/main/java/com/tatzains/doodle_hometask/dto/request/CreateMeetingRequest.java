@@ -1,4 +1,4 @@
-package com.tatzains.doodle_hometask.dto;
+package com.tatzains.doodle_hometask.dto.request;
 
 import com.tatzains.doodle_hometask.validation.ValidTimeRange;
 import jakarta.validation.constraints.NotBlank;

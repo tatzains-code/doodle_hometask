@@ -10,10 +10,8 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 
 /**
- * Validates a {@link com.tatzains.doodle_hometask.dto.TimeRangeRequest}'s start/end
- * against {@link com.tatzains.doodle_hometask.config.SchedulingProperties}: end after
- * start, duration and start aligned to the configured granularity, duration within the
- * configured bounds, and start within the allowed booking window.
+ * Validates a {@link com.tatzains.doodle_hometask.dto.request.TimeRangeRequest}'s start/end:
+ * order, granularity alignment, duration bounds, and booking window.
  */
 @Target(ElementType.TYPE)
 @Retention(RetentionPolicy.RUNTIME)

@@ -36,11 +36,12 @@ public interface TimeSlotRepository extends JpaRepository<TimeSlot, UUID> {
     }
 
     /**
-     * All slots tied to a meeting (across all participants), with
-     * {@code owner} fetched eagerly. Used on cancellation to flip every
-     * associated slot back to {@code FREE} and clear {@code meeting_id} in
-     * one query, without going through {@code MeetingParticipant}.
+     * An owner's own slots, full detail — backs {@code GET /slots}.
+     * Pass {@link Pageable#unpaged()} for an internal caller that needs the whole list.
      */
+    Page<TimeSlot> findByOwnerId(UUID ownerId, Pageable pageable);
+
+    /** All slots tied to a meeting, with {@code owner} fetched eagerly — used on cancellation. */
     @Query("select t from TimeSlot t join fetch t.owner where t.meeting.id = :meetingId")
     List<TimeSlot> findByMeetingId(@Param("meetingId") UUID meetingId);
 }

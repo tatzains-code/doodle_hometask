@@ -1,7 +1,7 @@
 package com.tatzains.doodle_hometask.validation;
 
 import com.tatzains.doodle_hometask.config.SchedulingProperties;
-import com.tatzains.doodle_hometask.dto.TimeRangeRequest;
+import com.tatzains.doodle_hometask.dto.request.TimeRangeRequest;
 import jakarta.validation.ConstraintValidator;
 import jakarta.validation.ConstraintValidatorContext;
 import lombok.RequiredArgsConstructor;

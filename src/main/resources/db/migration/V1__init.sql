@@ -51,8 +51,8 @@ CREATE TABLE meeting_participant (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     meeting_id UUID        NOT NULL REFERENCES meeting (id),
     user_id    UUID        NOT NULL REFERENCES app_user (id),
-    role       VARCHAR(10) NOT NULL,
-    CONSTRAINT chk_meeting_participant_role CHECK (role IN ('OWNER', 'INVITEE')),
+    role       VARCHAR(11) NOT NULL,
+    CONSTRAINT chk_meeting_participant_role CHECK (role IN ('OWNER', 'PARTICIPANT')),
     CONSTRAINT uq_meeting_participant UNIQUE (meeting_id, user_id)
 );
 
