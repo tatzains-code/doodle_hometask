@@ -33,23 +33,122 @@ subsequent request. This is a deliberate simplification — see
 |---|---|---|
 | `POST` | `/users` | `{ name, email }`, no password |
 | `POST` | `/slots` | Create a slot (owner = current user) |
-| `GET` | `/slots` | List my own slots (full detail) |
+| `GET` | `/slots` | List my own slots (full detail) — **paginated** |
 | `PATCH` | `/slots/{slotId}` | Modify a slot (only while `FREE`) |
 | `DELETE` | `/slots/{slotId}` | Delete a slot (only while `FREE`) |
-| `GET` | `/availability?ownerId=&from=&to=&duration=` | Another user's availability — restricted view (timing + status only). Defaults to the next 7 days if `from`/`to` are omitted; range is capped. When `duration` is given, adjacent `FREE` slots are merged into contiguous windows before filtering, so several back-to-back short slots can satisfy a longer request. |
+| `GET` | `/availability?ownerId=&from=&to=&duration=` | Another user's availability — restricted view (timing + status only). Defaults to the next 7 days if `from`/`to` are omitted; range is capped. When `duration` is given, adjacent `FREE` slots are merged into contiguous windows before filtering, so several back-to-back short slots can satisfy a longer request. **Paginated.** |
 | `POST` | `/meetings` | `{ title, description, start, end, participantIds }` — atomically checks and books every participant, or fails entirely |
-| `GET` | `/meetings` | List my meetings (as organizer or participant) |
+| `GET` | `/meetings` | List my meetings (as organizer or participant) — **paginated** |
 | `DELETE` | `/meetings/{meetingId}` | Cancel (organizer only) — every participant's slot(s) return to `FREE` |
 
 There is no separate "book a single slot" endpoint — a 1:1 meeting is simply
 `POST /meetings` with one entry in `participantIds`.
 
-Errors are returned as `ProblemDetail` (RFC 7807) via a single global
-exception handler: 404 for missing resources (including a well-formed but
-non-existent user id), 400 for malformed/invalid requests (including a
-missing or malformed `X-User-Id` header, and Bean Validation failures),
-409 for state conflicts (double-booking, modifying a `BUSY` slot,
-optimistic-lock failures), 403 for unauthorized cancellation.
+### Example requests
+
+Create a user:
+
+```bash
+curl -X POST http://localhost:8080/users \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Dana Kim", "email": "dana.kim@example.com"}'
+# -> { "id": "b2b1...", "name": "Dana Kim", "email": "dana.kim@example.com" }
+```
+
+Create a `FREE` slot (owner = whoever's id is in `X-User-Id`):
+
+```bash
+curl -X POST http://localhost:8080/slots \
+  -H "Content-Type: application/json" \
+  -H "X-User-Id: b2b1..." \
+  -d '{"start": "2026-09-18T09:00:00Z", "end": "2026-09-18T09:30:00Z"}'
+```
+
+Book a meeting (fails atomically with 409 if any participant isn't free):
+
+```bash
+curl -X POST http://localhost:8080/meetings \
+  -H "Content-Type: application/json" \
+  -H "X-User-Id: b2b1..." \
+  -d '{
+        "title": "Design sync",
+        "description": "Review the API contract",
+        "start": "2026-09-18T09:00:00Z",
+        "end": "2026-09-18T09:30:00Z",
+        "participantIds": ["c3c2...", "d4d3..."]
+      }'
+```
+
+Check someone else's availability (restricted view, no meeting details):
+
+```bash
+curl "http://localhost:8080/availability?ownerId=c3c2...&from=2026-09-18T00:00:00Z&to=2026-09-19T00:00:00Z&duration=30" \
+  -H "X-User-Id: b2b1..."
+```
+
+### Pagination
+
+`GET /slots`, `GET /availability`, and `GET /meetings` all accept standard
+Spring Data paging params — `page`, `size`, `sort` — via `Pageable`, with a
+default page size of 50. Each responds with Spring Data Web's
+`PagedModel<T>` shape: a `content` array plus a `page` object
+(`size`, `totalElements`, `totalPages`, `number`). This matters at the
+brief's stated scale ("hundreds of users, thousands of slots") so no list
+endpoint can return an unbounded result set. For `GET /availability` with a
+`duration` filter, contiguous `FREE` slots are merged before pagination is
+applied in-memory over the merged windows; the response shape is unchanged.
+
+### Errors
+
+All errors are returned as `ProblemDetail` (RFC 7807) from a single
+`GlobalExceptionHandler` — controllers never build error bodies themselves.
+
+| Code | Title | When | Example detail |
+|---|---|---|---|
+| 400 | `Invalid request` | Self-only participant list, invalid `start`/`end` range, malformed `X-User-Id` header | "At least one distinct participant is required" |
+| 400 | `Validation failed` | Bean Validation failure on the request body (e.g. `@ValidTimeRange` — start/duration not aligned to granularity, or outside min/max duration) | "start: must be aligned to a 15-minute granularity" |
+| 400 | `Malformed request` | Request body isn't valid JSON | "Malformed request body" |
+| 400 | `Missing parameter` | A required query param is absent (e.g. `ownerId` on `/availability`) | "Required parameter 'ownerId' is not present" |
+| 400 | `Invalid parameter` | A query/path param has the wrong type (e.g. non-numeric id) | "Invalid value for parameter: ownerId" |
+| 404 | `Resource not found` | Unknown user, slot, or meeting id | "Slot not found: 42" |
+| 409 | `Slot not modifiable` | `PATCH`/`DELETE` on a slot that's currently `BUSY` | "Slot 42 is BUSY and cannot be modified" |
+| 409 | `Slot unavailable` | A participant has a conflicting slot at booking time, or a concurrent request won the race (DB exclusion constraint or optimistic-lock failure) | "The requested slot(s) are no longer available" |
+| 409 | `Email already in use` | `POST /users` with an email that already exists | "Email already in use: a@b.com" |
+| 403 | `Not authorized` | Cancelling a meeting as a non-`OWNER` participant | "Only the organizer can cancel this meeting" |
+| 500 | `Internal server error` | Anything unhandled — logged server-side, no stack trace leaked to the client | "An unexpected error occurred" |
+
+## Testing
+
+```bash
+./mvnw test
+```
+
+Tests use Testcontainers (a real `postgres:16-alpine` container via
+`AbstractIntegrationTest`), so **Docker must be running** to run the suite.
+
+- `MeetingBookingIntegrationTest` — 1:1 and group booking happy paths,
+  partial-conflict rollback (no partial booking), participant validation
+  (empty/self-only/unknown), cancellation and organizer-only authorization,
+  and a concurrency test where two threads race to book the same
+  participant/slot — exactly one request succeeds (201), the other gets 409.
+- `SlotControllerIntegrationTest` — header validation, 409 on
+  `PATCH`/`DELETE` of a `BUSY` slot, happy-path free-slot modification.
+- `AvailabilityIntegrationTest` — happy-path queries, and confirms a
+  non-owner never receives meeting details through the restricted view.
+- `MeetingRequestValidatorTest` — a pure unit test (Mockito, no Spring
+  context or DB) for participant-validation rules.
+
+## Observability
+
+- **Swagger/OpenAPI** at `/swagger-ui.html` — interactive API docs, driven
+  by `springdoc-openapi`.
+- **Micrometer + Prometheus** at `/actuator/prometheus` — scrapeable
+  metrics, plus `/actuator/health` (details hidden from the response body)
+  and `/actuator/info`.
+- Three custom counters beyond the JVM/HTTP defaults: `meeting.booked`,
+  `meeting.cancelled`, and `meeting.booking.conflict` (incremented from
+  `MeetingService` and `GlobalExceptionHandler` respectively), giving a
+  quick signal on booking throughput and conflict rate without parsing logs.
 
 ## Domain model
 
@@ -67,123 +166,70 @@ optimistic-lock failures), 403 for unauthorized cancellation.
 
 ## Design decisions
 
-- **Configurable slot duration, aligned to a granularity step.**
-  Slot start times and durations are validated against a configurable
-  granularity (`scheduling.slot.granularity-minutes`, default 15) via a
-  single `@ValidTimeRange` bean-validation constraint, rather than
-  duplicating the check across `SlotService` and `MeetingService`. This
-  granularity assumption isn't a stated requirement of the brief — it's my
-  interpretation of "configurable duration" — and I made it an explicit,
-  documented assumption rather than a silent hardcoded value. The same
-  config block also holds `min-duration-minutes`/`max-duration-minutes`,
-  `min-booking-buffer-minutes` (no booking in the near past), and
-  `max-horizon-days` (no booking arbitrarily far in the future).
+- **Configurable slot granularity.** Start times and durations are
+  validated against a configurable step (`scheduling.slot.granularity-minutes`,
+  default 15) via one `@ValidTimeRange` constraint, not duplicated checks.
+  Not a stated requirement — my interpretation of "configurable duration,"
+  made an explicit assumption rather than a silent hardcode. Same config
+  block also holds min/max duration, booking buffer, and max horizon.
 
-- **Closed-world availability: explicit coverage required, no auto-filling.**
-  Booking a participant into `[start, end]` requires their existing `FREE`
-  slots to fully and contiguously cover that range — one slot, or several
-  adjacent ones (`MeetingService.isFullyCovered`). A gap, a `BUSY` slot
-  overlapping the range, or simply no slot at all for part of the range all
-  mean "not available" — absence of data is never treated as "free". No new
-  slot rows are created during booking; only existing `FREE` slots are
-  transitioned to `BUSY`. I started from the more permissive "absence of
-  data = free" reading and deliberately revised it: closed-world
-  availability is what lets this extend cleanly to rule-generated
-  availability later (e.g. a recurring "9–12, 13–14" rule that simply never
-  generates a lunch-hour slot) without a schema change — an open-world
-  default would silently treat that protected gap as bookable the moment
-  such a rule existed.
+- **Closed-world availability.** Booking `[start, end]` requires existing
+  `FREE` slots to fully, contiguously cover it (`MeetingService.isFullyCovered`) —
+  a gap, a `BUSY` slot, or simply no data all mean "not available." I
+  deliberately chose this over "absence of data = free" so it extends
+  cleanly to rule-generated availability later without a schema change.
 
-- **All-or-nothing booking across participants.**
-  `MeetingService.bookMeeting` runs as a single `@Transactional` operation:
-  every participant's availability is checked before any row is written,
-  and if any participant is unavailable the whole request fails and
-  nothing commits — no `Meeting`, no `MeetingParticipant`, no slot flipped
-  to `BUSY` for anyone. The per-participant coverage check is re-run at
-  write time rather than trusted from the earlier read, so a conflicting
-  slot committed by a concurrent transaction in between is still caught
-  before this one commits.
+- **All-or-nothing booking.** `MeetingService.bookMeeting` is one
+  `@Transactional` operation: every participant's availability is checked
+  before any row is written, and one unavailable participant fails the
+  whole request with nothing committed. The coverage check is re-run at
+  write time, not trusted from an earlier read, to catch concurrent
+  conflicts.
 
-- **Why `Meeting` stores its own `start`/`end`.**
-  `Meeting.start`/`Meeting.end` are populated directly from the organizer's
-  request rather than derived by scanning participants' `TimeSlot` rows.
-  Earlier iterations of the schema put a `slot_id` reference on `Meeting`,
-  then on `MeetingParticipant` — both broke once a meeting could be covered
-  by more than one contiguous `FREE` slot per participant (the "several
-  adjacent slots" case in closed-world coverage above has no single slot to
-  point at). Giving `Meeting` its own authoritative `start`/`end`, and
-  linking slots back via the nullable `TimeSlot.meeting` FK (cleared on
-  cancellation), sidesteps that entirely.
+- **`Meeting` stores its own `start`/`end`.** Populated from the
+  organizer's request, not derived from `TimeSlot` rows. Earlier designs
+  put a `slot_id` FK on `Meeting`/`MeetingParticipant`, but broke once a
+  meeting could be covered by several adjacent `FREE` slots per
+  participant — an authoritative `start`/`end` plus a nullable
+  `TimeSlot.meeting` back-reference sidesteps that.
 
-- **No slot splitting, no atomic reschedule.**
-  Booking always consumes existing `FREE` slots whole — it never carves a
-  slot into a booked part and a leftover free part; rescheduling is
-  cancel-then-rebook through the existing endpoints, not an atomic
-  slot-swap. Both share the same root cause: each would need its own
-  multi-row atomic operation, with dedicated concurrency tests,
-  disproportionate to a 4-hour time box — see "What I'd add" below.
+- **No slot splitting, no atomic reschedule.** Booking consumes `FREE`
+  slots whole; rescheduling is cancel-then-rebook. Both would need their
+  own multi-row atomic operation and dedicated concurrency tests —
+  disproportionate to the time box (see "What I'd add").
 
-- **`/availability?duration=X` merges contiguous `FREE` slots, matching
-  what booking already allows.**
-  Booking can satisfy a meeting window from several adjacent `FREE` slots
-  (see closed-world coverage above), so an availability search needed the
-  same view — otherwise a participant bookable for 90 minutes across three
-  30-minute slots would never surface in a search for 90-minute
-  availability. `AvailabilityService` loads the owner's `FREE` slots in
-  range, merges runs that are exactly back-to-back
-  (`slotA.end == slotB.start`, no gap or overlap), and filters by the
-  merged run's total span rather than any individual slot's duration. Each
-  run is returned as one restricted-projection result with its combined
-  `start`/`end` — the caller never sees that it was internally several slot
-  rows. This only changes how `/availability` computes windows; the
-  booking transaction already handled contiguous coverage separately and
-  wasn't touched.
+- **`/availability?duration=X` merges contiguous `FREE` slots.** Matches
+  what booking already allows (see closed-world coverage) — otherwise a
+  participant bookable across three adjacent 30-minute slots wouldn't
+  surface in a 90-minute search. `AvailabilityService` merges exactly
+  back-to-back runs and filters by combined span; the caller never sees
+  the underlying slot rows.
 
-- **Authorization boundary between "own" and "restricted" views.**
-  `GET /slots` (own slots) returns the full `SlotResponse`; `GET
-  /availability` (someone else's) returns `AvailabilitySlotResponse` — id,
-  timing, and `FREE`/`BUSY` status only, with no meeting reference at all.
-  This split is enforced in the service/mapper layer via a dedicated DTO,
-  not left to a shared response type happening to omit the right fields for
-  the right caller.
+- **"Own" vs. "restricted" view split.** `GET /slots` returns the full
+  `SlotResponse`; `GET /availability` returns `AvailabilitySlotResponse`
+  (timing + status only, no meeting reference). Enforced via a dedicated
+  DTO in the service/mapper layer, not left to a shared type that happens
+  to omit fields.
 
-- **Concurrency: optimistic locking, and a DB-level exclusion constraint
-  scoped to slot creation.**
-  `@Version` on `TimeSlot` covers row-local races: two concurrent requests
-  touching the same slot row (a `PATCH`/`DELETE`, or two `POST /meetings`
-  both trying to consume the same `FREE` slot) — the loser gets an
-  optimistic-lock failure, mapped to 409. The Postgres GiST exclusion
-  constraint on `(owner_id, tstzrange(start, end))` is the belt-and-braces
-  layer: it makes a given owner holding two overlapping slot rows
-  impossible at the DB level regardless of which transaction the
-  conflicting row came from, which matters most for `POST /slots`; since
-  booking only ever transitions existing rows rather than inserting new
-  overlapping ones, its role during booking itself is secondary to
-  `@Version`. I didn't add pessimistic locking (`SELECT ... FOR UPDATE` on
-  `User` rows, as seen in at least one other public solution to this same
-  challenge) — it isn't needed here, because every participant already gets
-  a materialized `TimeSlot` row per booking, and the exclusion constraint
-  enforces non-overlap at write time without needing to serialize access to
-  the user row itself.
+- **Optimistic locking + DB exclusion constraint.** `@Version` on
+  `TimeSlot` covers row-local races (concurrent `PATCH`/`DELETE`, or two
+  bookings racing for the same slot) → 409. The Postgres GiST exclusion
+  constraint on `(owner_id, tstzrange(start, end))` is belt-and-braces,
+  mattering most for `POST /slots`; booking only transitions existing rows,
+  so its role there is secondary. No pessimistic locking (`SELECT ... FOR
+  UPDATE`) on `User` rows — not needed, since every participant gets a
+  materialized `TimeSlot` row and the exclusion constraint already
+  enforces non-overlap at write time.
 
-- **Recurring availability rules are out of scope, and closed-world
-  booking is what makes that extension safe later.**
-  Recurring/rule-based availability (e.g. "available weekdays 9–17") isn't
-  implemented — every `FREE` slot is created explicitly via `POST /slots`.
-  This is a known limitation I thought through, not an oversight: it's
-  exactly what the closed-world availability decision above was chosen to
-  support cleanly. If rules were added later, a rule engine would
-  materialize `FREE` slots (or the coverage check would consult rules
-  directly) without needing to touch the closed-world semantics that
-  already treat "no slot" as "not available."
+- **Recurring availability rules are out of scope.** Every `FREE` slot is
+  created explicitly via `POST /slots`. A known, considered limitation —
+  it's exactly what closed-world availability was chosen to support
+  cleanly if a rule engine were added later.
 
-- **Auth is stubbed.**
-  There's no login flow: `POST /users` creates a user from `{ name, email }`
-  with no password, and every other request carries that user's id in an
-  `X-User-Id` header, resolved per-request by `CurrentUserResolver`. This is
-  a deliberate stand-in for the time box, not a design I'd ship as-is — real
-  auth would be OAuth2/JWT, with the header replaced by a validated bearer
-  token and `X-User-Id` removed entirely.
+- **Auth is stubbed.** `POST /users` takes `{ name, email }`, no password;
+  every other request carries that user's id in `X-User-Id`, resolved by
+  `CurrentUserResolver`. A deliberate stand-in for the time box, not a
+  design I'd ship — real auth would be OAuth2/JWT.
 
 ## AI usage
 

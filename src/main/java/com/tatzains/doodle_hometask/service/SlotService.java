@@ -5,8 +5,10 @@ import com.tatzains.doodle_hometask.domain.TimeSlot;
 import com.tatzains.doodle_hometask.domain.User;
 import com.tatzains.doodle_hometask.dto.request.CreateSlotRequest;
 import com.tatzains.doodle_hometask.dto.request.UpdateSlotRequest;
+import com.tatzains.doodle_hometask.dto.response.SlotResponse;
 import com.tatzains.doodle_hometask.exception.SlotNotFoundException;
 import com.tatzains.doodle_hometask.exception.SlotNotModifiableException;
+import com.tatzains.doodle_hometask.mapper.SlotMapper;
 import com.tatzains.doodle_hometask.repository.TimeSlotRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -23,7 +25,7 @@ public class SlotService {
     private final TimeSlotRepository timeSlotRepository;
 
     @Transactional
-    public TimeSlot createSlot(User owner, CreateSlotRequest request) {
+    public SlotResponse createSlot(User owner, CreateSlotRequest request) {
         TimeSlot slot = TimeSlot.builder()
                 .owner(owner)
                 .start(request.start())
@@ -31,20 +33,20 @@ public class SlotService {
                 .status(SlotStatus.FREE)
                 .build();
 
-        return timeSlotRepository.save(slot);
+        return SlotMapper.toResponse(timeSlotRepository.save(slot));
     }
 
     @Transactional(readOnly = true)
-    public Page<TimeSlot> listOwnSlots(User owner, Pageable pageable) {
-        return timeSlotRepository.findByOwnerId(owner.getId(), pageable);
+    public Page<SlotResponse> listOwnSlots(User owner, Pageable pageable) {
+        return timeSlotRepository.findByOwnerId(owner.getId(), pageable).map(SlotMapper::toResponse);
     }
 
     @Transactional
-    public TimeSlot updateSlot(User owner, UUID slotId, UpdateSlotRequest request) {
+    public SlotResponse updateSlot(User owner, UUID slotId, UpdateSlotRequest request) {
         TimeSlot slot = getOwnedFreeSlot(owner, slotId);
         slot.setStart(request.start());
         slot.setEnd(request.end());
-        return timeSlotRepository.save(slot);
+        return SlotMapper.toResponse(timeSlotRepository.save(slot));
     }
 
     @Transactional

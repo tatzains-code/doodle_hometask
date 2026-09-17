@@ -3,8 +3,10 @@ package com.tatzains.doodle_hometask.service;
 import com.tatzains.doodle_hometask.config.SchedulingProperties;
 import com.tatzains.doodle_hometask.domain.SlotStatus;
 import com.tatzains.doodle_hometask.domain.TimeSlot;
+import com.tatzains.doodle_hometask.dto.response.AvailabilitySlotResponse;
 import com.tatzains.doodle_hometask.exception.InvalidRangeException;
 import com.tatzains.doodle_hometask.exception.UserNotFoundException;
+import com.tatzains.doodle_hometask.mapper.AvailabilityMapper;
 import com.tatzains.doodle_hometask.repository.TimeSlotRepository;
 import com.tatzains.doodle_hometask.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -29,7 +31,7 @@ public class AvailabilityService {
     private final SchedulingProperties schedulingProperties;
 
     @Transactional(readOnly = true)
-    public Page<TimeSlot> getAvailability(UUID ownerId, Instant from, Instant to, Integer minDurationMinutes, Pageable pageable) {
+    public Page<AvailabilitySlotResponse> getAvailability(UUID ownerId, Instant from, Instant to, Integer minDurationMinutes, Pageable pageable) {
         if (!userRepository.existsById(ownerId)) {
             throw UserNotFoundException.forId(ownerId);
         }
@@ -50,7 +52,8 @@ public class AvailabilityService {
         }
 
         if (minDurationMinutes == null) {
-            return timeSlotRepository.findOverlappingPage(ownerId, rangeStart, rangeEnd, pageable);
+            return timeSlotRepository.findOverlappingPage(ownerId, rangeStart, rangeEnd, pageable)
+                    .map(AvailabilityMapper::toResponse);
         }
 
         // Can't push duration filtering into the paged query without a DB-specific interval
@@ -63,7 +66,7 @@ public class AvailabilityService {
         List<TimeSlot> filtered = mergeAdjacentRuns(freeSlots).stream()
                 .filter(run -> Duration.between(run.getStart(), run.getEnd()).toMinutes() >= minDurationMinutes)
                 .toList();
-        return paginate(filtered, pageable);
+        return paginate(filtered, pageable).map(AvailabilityMapper::toResponse);
     }
 
     /**

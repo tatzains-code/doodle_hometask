@@ -5,6 +5,7 @@ import com.tatzains.doodle_hometask.dto.request.CreateUserRequest;
 import com.tatzains.doodle_hometask.exception.DuplicateEmailException;
 import com.tatzains.doodle_hometask.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,6 +26,13 @@ public class UserService {
                 .email(request.email())
                 .build();
 
-        return userRepository.save(user);
+        // saveAndFlush forces the insert (and the email unique-constraint check) to happen
+        // here, so a race with another concurrent createUser surfaces as DuplicateEmailException
+        // rather than falling through to the generic booking-conflict handling at commit time.
+        try {
+            return userRepository.saveAndFlush(user);
+        } catch (DataIntegrityViolationException e) {
+            throw new DuplicateEmailException(request.email());
+        }
     }
 }

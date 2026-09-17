@@ -4,7 +4,6 @@ import com.tatzains.doodle_hometask.domain.User;
 import com.tatzains.doodle_hometask.dto.request.CreateSlotRequest;
 import com.tatzains.doodle_hometask.dto.response.SlotResponse;
 import com.tatzains.doodle_hometask.dto.request.UpdateSlotRequest;
-import com.tatzains.doodle_hometask.mapper.SlotMapper;
 import com.tatzains.doodle_hometask.service.SlotService;
 import com.tatzains.doodle_hometask.web.CurrentUserResolver;
 import io.swagger.v3.oas.annotations.Operation;
@@ -48,7 +47,7 @@ public class SlotController {
     @ResponseStatus(HttpStatus.CREATED)
     public SlotResponse createSlot(HttpServletRequest httpRequest, @Valid @RequestBody CreateSlotRequest request) {
         User owner = currentUserResolver.resolve(httpRequest);
-        return SlotMapper.toResponse(slotService.createSlot(owner, request));
+        return slotService.createSlot(owner, request);
     }
 
     @Operation(summary = "List the current user's own slots, in full detail")
@@ -58,7 +57,7 @@ public class SlotController {
             HttpServletRequest httpRequest,
             @PageableDefault(size = 50, sort = "start") Pageable pageable) {
         User owner = currentUserResolver.resolve(httpRequest);
-        return new PagedModel<>(slotService.listOwnSlots(owner, pageable).map(SlotMapper::toResponse));
+        return new PagedModel<>(slotService.listOwnSlots(owner, pageable));
     }
 
     @Operation(summary = "Modify a slot's time range", description = "Only permitted while the slot is FREE.")
@@ -74,7 +73,7 @@ public class SlotController {
             @PathVariable UUID slotId,
             @Valid @RequestBody UpdateSlotRequest request) {
         User owner = currentUserResolver.resolve(httpRequest);
-        return SlotMapper.toResponse(slotService.updateSlot(owner, slotId, request));
+        return slotService.updateSlot(owner, slotId, request);
     }
 
     @Operation(summary = "Delete a slot", description = "Only permitted while the slot is FREE.")

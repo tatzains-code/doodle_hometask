@@ -7,8 +7,9 @@ import com.tatzains.doodle_hometask.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
-import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -24,29 +25,29 @@ public class MeetingRequestValidator {
     private final UserRepository userRepository;
 
     /**
-     * @return the deduplicated set of requested participant ids (organizer excluded),
-     * after confirming they all exist and at least one is distinct from the organizer.
+     * @return the deduplicated requested participants (organizer excluded, unless they also
+     * named themselves), keyed by id, after confirming they all exist and at least one is
+     * distinct from the organizer. Fetches each participant's {@link User} exactly once, so
+     * the caller doesn't need to re-fetch them for the booking itself.
      */
-    public Set<UUID> validate(User organizer, Set<UUID> participantIds) {
+    public Map<UUID, User> validate(User organizer, Set<UUID> participantIds) {
         Set<UUID> deduped = new LinkedHashSet<>(participantIds);
 
-        List<User> found = userRepository.findAllById(deduped);
-        if (found.size() != deduped.size()) {
-            Set<UUID> foundIds = found.stream().map(User::getId).collect(Collectors.toSet());
+        Map<UUID, User> usersById = userRepository.findAllById(deduped).stream()
+                .collect(Collectors.toMap(User::getId, u -> u, (a, b) -> a, LinkedHashMap::new));
+        if (usersById.size() != deduped.size()) {
             Set<UUID> missing = deduped.stream()
-                    .filter(id -> !foundIds.contains(id))
+                    .filter(id -> !usersById.containsKey(id))
                     .collect(Collectors.toCollection(LinkedHashSet::new));
             throw UserNotFoundException.forIds(missing);
         }
 
-        Set<UUID> otherThanOrganizer = deduped.stream()
-                .filter(id -> !id.equals(organizer.getId()))
-                .collect(Collectors.toSet());
-        if (otherThanOrganizer.isEmpty()) {
+        boolean hasOtherThanOrganizer = deduped.stream().anyMatch(id -> !id.equals(organizer.getId()));
+        if (!hasOtherThanOrganizer) {
             throw new InvalidParticipantsException(
                     "A meeting must include at least one participant other than the organizer");
         }
 
-        return deduped;
+        return usersById;
     }
 }

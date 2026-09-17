@@ -11,6 +11,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
@@ -57,8 +58,9 @@ class MeetingRequestValidatorTest {
         User participant = User.builder().id(UUID.randomUUID()).name("Participant").email("i@example.com").build();
         when(userRepository.findAllById(any())).thenReturn(List.of(participant));
 
-        Set<UUID> result = validator.validate(organizer, Set.of(participant.getId()));
+        Map<UUID, User> result = validator.validate(organizer, Set.of(participant.getId()));
 
-        assertThat(result).containsExactly(participant.getId());
+        assertThat(result).containsOnlyKeys(participant.getId());
+        assertThat(result.get(participant.getId())).isEqualTo(participant);
     }
 }

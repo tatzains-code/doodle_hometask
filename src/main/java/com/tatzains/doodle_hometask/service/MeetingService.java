@@ -15,7 +15,6 @@ import com.tatzains.doodle_hometask.mapper.MeetingMapper;
 import com.tatzains.doodle_hometask.repository.MeetingParticipantRepository;
 import com.tatzains.doodle_hometask.repository.MeetingRepository;
 import com.tatzains.doodle_hometask.repository.TimeSlotRepository;
-import com.tatzains.doodle_hometask.repository.UserRepository;
 import io.micrometer.core.instrument.MeterRegistry;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -29,7 +28,6 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -38,7 +36,6 @@ import java.util.stream.Collectors;
 public class MeetingService {
 
     private final MeetingRequestValidator meetingRequestValidator;
-    private final UserRepository userRepository;
     private final MeetingRepository meetingRepository;
     private final MeetingParticipantRepository meetingParticipantRepository;
     private final TimeSlotRepository timeSlotRepository;
@@ -50,18 +47,15 @@ public class MeetingService {
      */
     @Transactional
     public MeetingResponse bookMeeting(User organizer, CreateMeetingRequest request) {
-        Set<UUID> requestedParticipantIds = meetingRequestValidator.validate(organizer, request.participantIds());
+        Map<UUID, User> requestedUsers = meetingRequestValidator.validate(organizer, request.participantIds());
+
+        Map<UUID, User> usersById = new LinkedHashMap<>(requestedUsers);
+        usersById.putIfAbsent(organizer.getId(), organizer);
 
         Map<UUID, ParticipantRole> roleByUserId = new LinkedHashMap<>();
         roleByUserId.put(organizer.getId(), ParticipantRole.OWNER);
-        for (UUID id : requestedParticipantIds) {
+        for (UUID id : requestedUsers.keySet()) {
             roleByUserId.putIfAbsent(id, ParticipantRole.PARTICIPANT);
-        }
-
-        Map<UUID, User> usersById = new LinkedHashMap<>();
-        usersById.put(organizer.getId(), organizer);
-        for (User user : userRepository.findAllById(roleByUserId.keySet())) {
-            usersById.put(user.getId(), user);
         }
 
         // All-or-nothing: check every participant before mutating anything.
@@ -101,11 +95,40 @@ public class MeetingService {
      * outside the range, or no slots at all all count as not covered.
      */
     private boolean isFullyCovered(UUID userId, Instant start, Instant end) {
+        return coversRange(fetchSortedOverlapping(userId, start, end), start, end);
+    }
+
+    /**
+     * Transitions a participant's FREE slots covering [start, end] to BUSY, without altering
+     * their bounds. Re-validates coverage rather than trusting the upfront check, to catch a
+     * conflicting slot committed in between.
+     */
+    private void bookParticipantSlots(User participant, Meeting meeting, Instant start, Instant end) {
+        List<TimeSlot> existing = fetchSortedOverlapping(participant.getId(), start, end);
+        if (!coversRange(existing, start, end)) {
+            throw new SlotConflictException(participant.getId());
+        }
+
+        for (TimeSlot slot : existing) {
+            slot.setStatus(SlotStatus.BUSY);
+            slot.setMeeting(meeting);
+        }
+        timeSlotRepository.saveAll(existing);
+    }
+
+    private List<TimeSlot> fetchSortedOverlapping(UUID userId, Instant start, Instant end) {
         List<TimeSlot> overlapping = new ArrayList<>(timeSlotRepository.findOverlappingList(userId, start, end));
         overlapping.sort(Comparator.comparing(TimeSlot::getStart));
+        return overlapping;
+    }
 
+    /**
+     * Shared coverage walk behind {@link #isFullyCovered} and {@link #bookParticipantSlots} —
+     * {@code sortedSlots} must already be sorted by {@code start}.
+     */
+    private boolean coversRange(List<TimeSlot> sortedSlots, Instant start, Instant end) {
         Instant cursor = start;
-        for (TimeSlot slot : overlapping) {
+        for (TimeSlot slot : sortedSlots) {
             if (slot.getStatus() == SlotStatus.BUSY
                     || slot.getStart().isBefore(start)
                     || slot.getEnd().isAfter(end)
@@ -115,37 +138,6 @@ public class MeetingService {
             cursor = slot.getEnd();
         }
         return !cursor.isBefore(end);
-    }
-
-    /**
-     * Transitions a participant's FREE slots covering [start, end] to BUSY, without altering
-     * their bounds. Re-validates coverage rather than trusting the upfront check, to catch a
-     * conflicting slot committed in between.
-     */
-    private void bookParticipantSlots(User participant, Meeting meeting, Instant start, Instant end) {
-        List<TimeSlot> existing = new ArrayList<>(
-                timeSlotRepository.findOverlappingList(participant.getId(), start, end));
-        existing.sort(Comparator.comparing(TimeSlot::getStart));
-
-        Instant cursor = start;
-        for (TimeSlot slot : existing) {
-            if (slot.getStatus() == SlotStatus.BUSY
-                    || slot.getStart().isBefore(start)
-                    || slot.getEnd().isAfter(end)
-                    || slot.getStart().isAfter(cursor)) {
-                throw new SlotConflictException(participant.getId());
-            }
-
-            slot.setStatus(SlotStatus.BUSY);
-            slot.setMeeting(meeting);
-            cursor = slot.getEnd();
-        }
-
-        if (cursor.isBefore(end)) {
-            throw new SlotConflictException(participant.getId());
-        }
-
-        timeSlotRepository.saveAll(existing);
     }
 
     @Transactional(readOnly = true)

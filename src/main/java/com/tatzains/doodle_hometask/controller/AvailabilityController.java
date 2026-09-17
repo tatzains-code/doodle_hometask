@@ -1,7 +1,6 @@
 package com.tatzains.doodle_hometask.controller;
 
 import com.tatzains.doodle_hometask.dto.response.AvailabilitySlotResponse;
-import com.tatzains.doodle_hometask.mapper.AvailabilityMapper;
 import com.tatzains.doodle_hometask.service.AvailabilityService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -41,7 +40,6 @@ public class AvailabilityController {
             @Parameter(description = "Range end, defaults to a configured default range after 'from'") @RequestParam(required = false) Instant to,
             @Parameter(description = "Only return slots at least this many minutes long") @RequestParam(required = false) Integer duration,
             @PageableDefault(size = 50, sort = "start") Pageable pageable) {
-        return new PagedModel<>(availabilityService.getAvailability(ownerId, from, to, duration, pageable)
-                .map(AvailabilityMapper::toResponse));
+        return new PagedModel<>(availabilityService.getAvailability(ownerId, from, to, duration, pageable));
     }
 }
