@@ -24,3 +24,14 @@ management:
 springdoc:
   swagger-ui:
     path: /swagger-ui.html
+
+scheduling:
+  slot:
+    granularity-minutes: 15
+    min-duration-minutes: 15
+    max-duration-minutes: 240
+    min-booking-buffer-minutes: 15
+    max-horizon-days: 90
+  availability:
+    default-range-days: 7
+    max-range-days: 90
