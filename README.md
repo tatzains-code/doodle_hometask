@@ -231,18 +231,6 @@ Tests use Testcontainers (a real `postgres:16-alpine` container via
   `CurrentUserResolver`. A deliberate stand-in for the time box, not a
   design I'd ship — real auth would be OAuth2/JWT.
 
-## AI usage
-
-Claude (via Claude Code) was used for boilerplate (DTOs, mappers, the
-repetitive `@ExceptionHandler` wiring in `GlobalExceptionHandler`,
-Testcontainers setup), drafting integration tests from a description of each
-scenario, and as a sounding board for trade-offs — e.g. talking through
-open-world vs. closed-world availability semantics before settling on
-closed-world. The scope decisions, the domain rules, and the reasoning
-written up in this README are my own; a `CLAUDE.md` in this repo records the
-constraints I gave the assistant up front, specifically so it would work
-within them rather than quietly redesign them.
-
 ## What I'd add with more time
 
 - Slot splitting on partial booking, atomic meeting rescheduling.
